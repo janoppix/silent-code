@@ -9,6 +9,15 @@ export { checkZeroComments } from "./zero-comments.js";
 export { checkZeroCoauthor, type CoauthorCheckResult } from "./zero-coauthor.js";
 export { checkZeroAiAttribution } from "./zero-ai-attribution.js";
 
+const PROSE_EXTENSIONS_EXEMPT_FROM_ATTRIBUTION_SCAN = new Set([".md", ".mdx", ".txt", ".rst", ".adoc"]);
+
+function isExemptFromAttributionScan(file: string): boolean {
+  const base = file.split("/").pop() ?? file;
+  const idx = base.lastIndexOf(".");
+  if (idx <= 0) return false;
+  return PROSE_EXTENSIONS_EXEMPT_FROM_ATTRIBUTION_SCAN.has(base.slice(idx).toLowerCase());
+}
+
 export async function checkFile(
   file: string,
   base: string,
@@ -25,7 +34,7 @@ export async function checkFile(
     reports.push(await checkZeroComments(file, base, current, config.policies["zero-comments"]));
   }
 
-  if (config.policies["zero-ai-attribution"].enabled) {
+  if (config.policies["zero-ai-attribution"].enabled && !isExemptFromAttributionScan(file)) {
     const attribution = checkZeroAiAttribution(current, config.policies["zero-ai-attribution"]);
     reports.push(withFile(attribution, file));
   }

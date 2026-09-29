@@ -30,8 +30,6 @@ policies:
       - cursor
     custom-patterns: []
 
-# This file is silent-code's own dogfooded config, not the shipped default (see
-# templates/.silent-code.yml for that). It differs only in the extra ignore entries below.
 ignore:
   - "**/dist/**"
   - "**/build/**"
@@ -42,8 +40,3 @@ ignore:
   - "**/package-lock.json"
   - "**/pnpm-lock.yaml"
   - "**/yarn.lock"
-  # These test fixtures legitimately embed the exact phrases zero-ai-attribution blocks, as
-  # literal test input, not as real attribution.
-  - "tests/zero-ai-attribution.test.ts"
-  - "tests/hook.test.ts"
-  - "tests/check-file.test.ts"

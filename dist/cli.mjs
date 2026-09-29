@@ -748,6 +748,13 @@ async function checkZeroComments(file, base, current, config) {
 }
 
 // src/policies/index.ts
+var PROSE_EXTENSIONS_EXEMPT_FROM_ATTRIBUTION_SCAN = /* @__PURE__ */ new Set([".md", ".mdx", ".txt", ".rst", ".adoc"]);
+function isExemptFromAttributionScan(file) {
+  const base = file.split("/").pop() ?? file;
+  const idx = base.lastIndexOf(".");
+  if (idx <= 0) return false;
+  return PROSE_EXTENSIONS_EXEMPT_FROM_ATTRIBUTION_SCAN.has(base.slice(idx).toLowerCase());
+}
 async function checkFile(file, base, current, config) {
   if (isIgnored(file, config.ignore) || isGeneratedFile(current)) {
     return emptyReport();
@@ -756,7 +763,7 @@ async function checkFile(file, base, current, config) {
   if (config.policies["zero-comments"].enabled) {
     reports.push(await checkZeroComments(file, base, current, config.policies["zero-comments"]));
   }
-  if (config.policies["zero-ai-attribution"].enabled) {
+  if (config.policies["zero-ai-attribution"].enabled && !isExemptFromAttributionScan(file)) {
     const attribution = checkZeroAiAttribution(current, config.policies["zero-ai-attribution"]);
     reports.push(withFile(attribution, file));
   }
@@ -1177,14 +1184,6 @@ function templatesDir2() {
   }
   throw new Error("Could not locate templates/ directory");
 }
-function packageConfigDir() {
-  const here = path5.dirname(fileURLToPath3(import.meta.url));
-  const candidates = [path5.join(here, "..", ".."), path5.join(here, "..")];
-  for (const candidate of candidates) {
-    if (existsSync4(path5.join(candidate, ".silent-code.yml"))) return candidate;
-  }
-  throw new Error("Could not locate default .silent-code.yml");
-}
 async function appendPolicySection(filePath, section) {
   if (!existsSync4(filePath)) {
     await writeFile2(filePath, `${section}
@@ -1208,7 +1207,7 @@ async function runInit(cwd) {
   if (existsSync4(configPath)) {
     messages.push(".silent-code.yml already exists, left untouched");
   } else {
-    await copyFile(path5.join(packageConfigDir(), ".silent-code.yml"), configPath);
+    await copyFile(path5.join(templatesDir2(), ".silent-code.yml"), configPath);
     messages.push("created .silent-code.yml");
   }
   const claudeSection = await readFile4(path5.join(templatesDir2(), "CLAUDE.md"), "utf8");

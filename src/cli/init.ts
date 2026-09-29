@@ -14,15 +14,6 @@ function templatesDir(): string {
   throw new Error("Could not locate templates/ directory");
 }
 
-function packageConfigDir(): string {
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  const candidates = [path.join(here, "..", ".."), path.join(here, "..")];
-  for (const candidate of candidates) {
-    if (existsSync(path.join(candidate, ".silent-code.yml"))) return candidate;
-  }
-  throw new Error("Could not locate default .silent-code.yml");
-}
-
 async function appendPolicySection(filePath: string, section: string): Promise<string> {
   if (!existsSync(filePath)) {
     await writeFile(filePath, `${section}\n`, "utf8");
@@ -44,7 +35,7 @@ export async function runInit(cwd: string): Promise<void> {
   if (existsSync(configPath)) {
     messages.push(".silent-code.yml already exists, left untouched");
   } else {
-    await copyFile(path.join(packageConfigDir(), ".silent-code.yml"), configPath);
+    await copyFile(path.join(templatesDir(), ".silent-code.yml"), configPath);
     messages.push("created .silent-code.yml");
   }
 
