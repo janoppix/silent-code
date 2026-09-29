@@ -1,0 +1,42 @@
+version: 1
+
+policies:
+  zero-comments:
+    enabled: true
+    added-lines-only: true
+    python-docstrings: allow
+
+    allow:
+      shebang: true
+      ts-ignore: false
+      ts-expect-error: false
+      eslint-directives: false
+      noqa: false
+      go-directives: true
+      pragma-directives: true
+
+    custom-allow: []
+
+  zero-coauthor:
+    enabled: true
+    mode: block
+
+  zero-ai-attribution:
+    enabled: true
+    providers:
+      - anthropic
+      - openai
+      - github-copilot
+      - cursor
+    custom-patterns: []
+
+ignore:
+  - "**/dist/**"
+  - "**/build/**"
+  - "**/vendor/**"
+  - "**/node_modules/**"
+  - "**/*.min.js"
+  - "**/*.min.css"
+  - "**/package-lock.json"
+  - "**/pnpm-lock.yaml"
+  - "**/yarn.lock"

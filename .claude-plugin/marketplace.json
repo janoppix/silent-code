@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "silent-code",
+  "description": "Deterministic zero-comments / zero-coauthor / zero-ai-attribution enforcement for AI coding agents",
+  "owner": {
+    "name": "Mediastream"
+  },
+  "plugins": [
+    {
+      "name": "silent-code",
+      "description": "Blocks new source-code comments, Co-Authored-By trailers and AI attribution in code, commits and PRs via native Claude Code hooks.",
+      "source": "./",
+      "category": "development-tools"
+    }
+  ]
+}

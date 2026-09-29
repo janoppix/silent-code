@@ -1,0 +1,29 @@
+name: Silent Code
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  silent-code:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npx --yes silent-code check --range ${{ github.event.pull_request.base.sha || github.event.before }}..${{ github.sha }}
+
+      - name: Check PR title and body
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          printf '%s\n\n%s\n' "$PR_TITLE" "$PR_BODY" > /tmp/pr-message.txt
+          npx --yes silent-code check-message /tmp/pr-message.txt

@@ -1,0 +1,9 @@
+{
+  "name": "silent-code",
+  "description": "Deterministic enforcement of zero-comments, zero-coauthor and zero-ai-attribution for AI coding agents",
+  "author": {
+    "name": "Mediastream"
+  },
+  "version": "0.1.0",
+  "license": "MIT"
+}

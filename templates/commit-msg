@@ -1,0 +1,8 @@
+SILENT_CODE_BIN="$(command -v silent-code || echo "npx --no-install silent-code")"
+$SILENT_CODE_BIN check-message "$1"
+exit_code=$?
+if [ $exit_code -ne 0 ]; then
+  echo ""
+  echo "silent-code: zero-coauthor / zero-ai-attribution violation(s) found in commit message. Commit blocked."
+fi
+exit $exit_code

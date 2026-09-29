@@ -1,0 +1,29 @@
+{
+  "description": "silent-code - deterministic zero-comments / zero-coauthor / zero-ai-attribution enforcement",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs\" hook PostToolUse",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs\" hook PreToolUse",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

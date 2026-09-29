@@ -1,0 +1,58 @@
+{
+  "name": "silent-code",
+  "version": "0.1.0",
+  "description": "Deterministic enforcement of zero-comments, zero-coauthor and zero-ai-attribution for AI coding agents",
+  "keywords": [
+    "claude-code",
+    "claude-code-plugin",
+    "ai-agent",
+    "code-review",
+    "git-hooks",
+    "linter",
+    "tree-sitter"
+  ],
+  "homepage": "https://github.com/janoppix/silent-code#readme",
+  "bugs": "https://github.com/janoppix/silent-code/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/janoppix/silent-code.git"
+  },
+  "license": "MIT",
+  "author": "janoppix",
+  "type": "module",
+  "bin": {
+    "silent-code": "dist/cli.mjs"
+  },
+  "files": [
+    "dist",
+    "grammars",
+    "templates",
+    "hooks",
+    ".claude-plugin"
+  ],
+  "scripts": {
+    "build": "tsx scripts/build.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "diff": "^9.0.0",
+    "picomatch": "^4.0.2",
+    "web-tree-sitter": "^0.25.6",
+    "yaml": "^2.6.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/picomatch": "^3.0.1",
+    "esbuild": "^0.28.2",
+    "tree-sitter-wasms": "^0.1.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^5.0.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

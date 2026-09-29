@@ -1,0 +1,28 @@
+name: "Silent Code"
+description: "Deterministic zero-comments / zero-coauthor / zero-ai-attribution enforcement for the current diff"
+inputs:
+  range:
+    description: "Git range to check, e.g. origin/main...HEAD"
+    required: false
+    default: ""
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+    - shell: bash
+      run: |
+        RANGE="${{ inputs.range }}"
+        if [ -z "$RANGE" ]; then
+          RANGE="${{ github.event.pull_request.base.sha || github.event.before }}..${{ github.sha }}"
+        fi
+        npx --yes silent-code check --range "$RANGE"
+    - if: github.event_name == 'pull_request'
+      shell: bash
+      env:
+        PR_TITLE: ${{ github.event.pull_request.title }}
+        PR_BODY: ${{ github.event.pull_request.body }}
+      run: |
+        printf '%s\n\n%s\n' "$PR_TITLE" "$PR_BODY" > "$RUNNER_TEMP/pr-message.txt"
+        npx --yes silent-code check-message "$RUNNER_TEMP/pr-message.txt"
