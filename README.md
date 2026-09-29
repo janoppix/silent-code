@@ -33,13 +33,30 @@ CI validation          (GitHub Actions)
 ```
 /plugin marketplace add janoppix/silent-code
 /plugin install silent-code@silent-code
+/reload-plugins
 ```
+
+`/reload-plugins` wires the hooks into the current session; without it they
+only take effect the next time Claude Code starts.
 
 The plugin registers a `PostToolUse` hook on `Write|Edit|MultiEdit|NotebookEdit`
 that runs `zero-comments` + `zero-ai-attribution` against the file just
-touched, and a `PreToolUse` hook on `Bash` that inspects `git commit -m "..."`
-invocations before they run. A violation is returned to Claude as structured
-feedback so it can self-correct instead of silently failing.
+touched; on `Bash` it also scans any files the command wrote (`sed -i`, `tee`,
+heredoc redirects, `perl -i`, ...) and, for `git commit`, re-checks the actual
+resulting commit message via `git log -1` as a ground-truth safety net
+regardless of how the message was passed. A `PreToolUse` hook on `Bash`
+additionally inspects `git commit` and `gh pr create|edit` invocations
+(`-m`, `--message`, bundled `-am`, `-F`/`--file`/`--body-file` including
+stdin heredocs, and the `$(cat <<EOF ...)` idiom) before they run, catching
+most violations before the commit is even created. A violation is returned to
+Claude as structured feedback so it can self-correct instead of silently
+failing; for the post-commit ground truth, the feedback is to amend.
+
+`gh pr` bodies are only checked at the `PreToolUse` parsing layer, not with a
+ground-truth `gh pr view` call after the fact — the spec requires this tool
+work fully offline, and querying GitHub's API on every PR command would
+break that. Run `silent-code check --range` in CI (see below) as the
+ground-truth layer for PRs instead.
 
 ## Install (git hooks + CI, any repo)
 

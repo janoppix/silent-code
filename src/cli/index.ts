@@ -10,6 +10,7 @@ import {
   resolveDiffContext,
   stagedFileContent,
   stagedFiles,
+  workingTreeChangedFiles,
 } from "../core/git.js";
 import { emptyReport, formatReport, mergeReports, type CheckReport } from "../core/result.js";
 import { checkCommitMessage, checkFile } from "../policies/index.js";
@@ -101,7 +102,7 @@ async function cmdCheck(cwd: string, args: string[]): Promise<void> {
       reports.push(await checkFile(file, base, current, config));
     }
   } else {
-    const files = await stagedFiles(cwd);
+    const files = await workingTreeChangedFiles(cwd);
     for (const file of files) {
       const current = await readFile(path.join(cwd, file), "utf8").catch(() => "");
       const { base } = await resolveDiffContext(cwd, file, current);

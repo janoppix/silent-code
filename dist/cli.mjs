@@ -138,6 +138,28 @@ async function stagedFiles(cwd) {
   if (res.code !== 0) return [];
   return res.stdout.split("\n").filter(Boolean);
 }
+async function workingTreeChangedFiles(cwd) {
+  const res = await git(["status", "--porcelain", "--untracked-files=all"], cwd);
+  if (res.code !== 0) return [];
+  const files = [];
+  for (const line of res.stdout.split("\n")) {
+    if (!line) continue;
+    const status = line.slice(0, 2);
+    let rest = line.slice(3);
+    if (status.includes("D")) continue;
+    if (rest.includes(" -> ")) {
+      rest = rest.split(" -> ")[1];
+    }
+    files.push(unquoteGitPath(rest));
+  }
+  return files;
+}
+function unquoteGitPath(path7) {
+  if (path7.startsWith('"') && path7.endsWith('"')) {
+    return path7.slice(1, -1).replace(/\\(.)/g, "$1");
+  }
+  return path7;
+}
 async function changedFilesInRange(cwd, range) {
   const res = await git(["diff", "--name-only", "--diff-filter=ACMR", range], cwd);
   if (res.code !== 0) return [];
@@ -145,6 +167,11 @@ async function changedFilesInRange(cwd, range) {
 }
 async function fileAtRevision(cwd, revision, file) {
   return showFileAtRef(cwd, revision, file);
+}
+async function lastCommitMessage(cwd) {
+  const res = await git(["log", "-1", "--format=%B"], cwd);
+  if (res.code !== 0) return null;
+  return res.stdout;
 }
 async function commitMessagesInRange(cwd, range) {
   const res = await git(["log", "--format=%H%x01%B%x02", range], cwd);
@@ -865,6 +892,12 @@ async function checkTreeSitter() {
 }
 
 // src/cli/hook.ts
+var COMMIT_COMMAND_RE = /\bgit\b[^&|;\n]*\bcommit\b/;
+var PR_COMMAND_RE = /\bgh\b[^&|;\n]*\bpr\b[^&|;\n]*\b(create|edit)\b/;
+var GENERIC_HEREDOC_RE = /<<[-~]?\s*(['"]?)(\w+)\1[^\n]*\n([\s\S]*?)\n[ \t]*\2\b/g;
+var FLAG_QUOTED_RE = /(?<=^|\s)(?:-[a-zA-Z]*m|--message|--title|--body)(?:=|\s+)(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/g;
+var FLAG_FILE_PATH_RE = /(?:-F|--file|--body-file)(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))/g;
+var FILE_WRITING_BASH_RE = /(>>?[^&|]|\btee\b|\bsed\s+-[a-zA-Z]*i|\bperl\s+-[a-zA-Z]*i|\bpatch\b|\bgit\s+apply\b|\bcp\s|\bmv\s|\brsync\b)/;
 async function readStdin() {
   const chunks = [];
   for await (const chunk of process.stdin) {
@@ -872,13 +905,40 @@ async function readStdin() {
   }
   return Buffer.concat(chunks).toString("utf8");
 }
-async function handlePostToolUse(input) {
-  const cwd = input.cwd ?? process.cwd();
-  const toolName = input.tool_name ?? "";
-  if (!["Write", "Edit", "MultiEdit", "NotebookEdit"].includes(toolName)) return emptyReport();
-  const toolInput = input.tool_input ?? {};
-  const filePath = toolInput.file_path ?? "";
-  if (!filePath) return emptyReport();
+function unescapeShellQuoted(text) {
+  return text.replace(/\\(["'\\])/g, "$1");
+}
+async function extractTextsFromCommand(command, cwd) {
+  const texts = [];
+  const seenSpans = [];
+  const heredocRe = new RegExp(GENERIC_HEREDOC_RE.source, "g");
+  let match;
+  while (match = heredocRe.exec(command)) {
+    texts.push(match[3]);
+    seenSpans.push([match.index, match.index + match[0].length]);
+  }
+  const quotedRe = new RegExp(FLAG_QUOTED_RE.source, "g");
+  while (match = quotedRe.exec(command)) {
+    const withinHeredoc = seenSpans.some(([start, end]) => match.index >= start && match.index < end);
+    if (withinHeredoc) continue;
+    texts.push(unescapeShellQuoted(match[1] ?? match[2] ?? ""));
+  }
+  const { readFile: readFile6 } = await import("node:fs/promises");
+  const path7 = await import("node:path");
+  const filePathRe = new RegExp(FLAG_FILE_PATH_RE.source, "g");
+  while (match = filePathRe.exec(command)) {
+    const filePath = match[1] ?? match[2] ?? match[3] ?? "";
+    if (!filePath || filePath === "-") continue;
+    const absolute = path7.isAbsolute(filePath) ? filePath : path7.join(cwd, filePath);
+    try {
+      texts.push(await readFile6(absolute, "utf8"));
+    } catch {
+      continue;
+    }
+  }
+  return texts;
+}
+async function checkWrittenFile(cwd, filePath) {
   const { readFile: readFile6 } = await import("node:fs/promises");
   const path7 = await import("node:path");
   const relative = path7.isAbsolute(filePath) ? path7.relative(cwd, filePath) : filePath;
@@ -893,46 +953,60 @@ async function handlePostToolUse(input) {
   const { base } = await resolveDiffContext(cwd, relative, current);
   return checkFile(relative, base, current, config);
 }
-var COMMIT_COMMAND_RE = /\bgit\s+commit\b/;
-var PR_COMMAND_RE = /\bgh\s+pr\s+(create|edit)\b/;
-var FLAG_HEREDOC_RE = /(-m|-F|--title|--body|--body-file)\s+"?\$\(\s*cat\s+<<[-~]?\s*['"]?(\w+)['"]?[^\n]*\n([\s\S]*?)\n\s*\2\s*\)"?/g;
-var FLAG_QUOTED_RE = /(-m|--title|--body)\s+(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/g;
-var FLAG_FILE_PATH_RE = /(-F|--body-file)\s+(?:"([^"]+)"|'([^']+)'|(\S+))/g;
-function unescapeShellQuoted(text) {
-  return text.replace(/\\(["'\\])/g, "$1");
-}
-async function extractTextsFromCommand(command, cwd) {
-  const texts = [];
-  const seenSpans = /* @__PURE__ */ new Set();
-  const heredocRe = new RegExp(FLAG_HEREDOC_RE.source, "g");
-  let match;
-  while (match = heredocRe.exec(command)) {
-    texts.push(match[3]);
-    seenSpans.add(`${match.index}:${match.index + match[0].length}`);
-  }
-  const quotedRe = new RegExp(FLAG_QUOTED_RE.source, "g");
-  while (match = quotedRe.exec(command)) {
-    const withinHeredoc = [...seenSpans].some((span) => {
-      const [start, end] = span.split(":").map(Number);
-      return match.index >= start && match.index < end;
-    });
-    if (withinHeredoc) continue;
-    texts.push(unescapeShellQuoted(match[2] ?? match[3] ?? ""));
-  }
+async function checkBashWrittenFiles(cwd, command) {
+  if (!FILE_WRITING_BASH_RE.test(command)) return emptyReport();
+  const root = await repoRoot(cwd) ?? cwd;
+  const files = await workingTreeChangedFiles(root);
+  if (files.length === 0) return emptyReport();
+  const config = await loadConfig(root);
   const { readFile: readFile6 } = await import("node:fs/promises");
   const path7 = await import("node:path");
-  const filePathRe = new RegExp(FLAG_FILE_PATH_RE.source, "g");
-  while (match = filePathRe.exec(command)) {
-    const filePath = match[2] ?? match[3] ?? match[4] ?? "";
-    if (!filePath) continue;
-    const absolute = path7.isAbsolute(filePath) ? filePath : path7.join(cwd, filePath);
-    try {
-      texts.push(await readFile6(absolute, "utf8"));
-    } catch {
-      continue;
-    }
+  const reports = [];
+  for (const file of files) {
+    const current = await readFile6(path7.join(root, file), "utf8").catch(() => null);
+    if (current === null) continue;
+    const { base } = await resolveDiffContext(root, file, current);
+    reports.push(await checkFile(file, base, current, config));
   }
-  return texts;
+  return mergeReports(reports);
+}
+function withAmendGuidance(report) {
+  const amend = (v) => ({
+    ...v,
+    action: `${v.action} This commit was already created; fix the message and run: git commit --amend`
+  });
+  return { ...report, violations: report.violations.map(amend) };
+}
+async function checkLastCommitGroundTruth(cwd, bashSucceeded) {
+  if (!bashSucceeded) return emptyReport();
+  const root = await repoRoot(cwd) ?? cwd;
+  const message = await lastCommitMessage(root);
+  if (message === null) return emptyReport();
+  const config = await loadConfig(root);
+  return withAmendGuidance(checkCommitMessage(message, config));
+}
+async function handlePostToolUse(input) {
+  const cwd = input.cwd ?? process.cwd();
+  const toolName = input.tool_name ?? "";
+  const toolInput = input.tool_input ?? {};
+  if (["Write", "Edit", "MultiEdit", "NotebookEdit"].includes(toolName)) {
+    const filePath = toolInput.file_path ?? "";
+    if (!filePath) return emptyReport();
+    return checkWrittenFile(cwd, filePath);
+  }
+  if (toolName === "Bash") {
+    const command = toolInput.command ?? "";
+    const bashSucceeded = input.tool_response?.type !== "error";
+    const reports = [];
+    if (COMMIT_COMMAND_RE.test(command)) {
+      reports.push(await checkLastCommitGroundTruth(cwd, bashSucceeded));
+    }
+    if (bashSucceeded) {
+      reports.push(await checkBashWrittenFiles(cwd, command));
+    }
+    return mergeReports(reports);
+  }
+  return emptyReport();
 }
 async function handlePreToolUse(input) {
   const cwd = input.cwd ?? process.cwd();
@@ -1313,7 +1387,7 @@ async function cmdCheck(cwd, args) {
       reports.push(await checkFile(file, base, current, config));
     }
   } else {
-    const files = await stagedFiles(cwd);
+    const files = await workingTreeChangedFiles(cwd);
     for (const file of files) {
       const current = await readFile5(path6.join(cwd, file), "utf8").catch(() => "");
       const { base } = await resolveDiffContext(cwd, file, current);

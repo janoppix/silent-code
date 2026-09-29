@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const CLI = path.join(process.cwd(), "dist", "cli.mjs");
 
@@ -19,10 +19,6 @@ function runHook(event: string, input: Record<string, unknown>): { code: number;
 }
 
 let repo: string;
-
-beforeAll(() => {
-  execFileSync("npx", ["tsx", "scripts/build.ts"], { cwd: process.cwd() });
-});
 
 beforeEach(() => {
   repo = mkdtempSync(path.join(tmpdir(), "silent-code-hook-"));
@@ -107,6 +103,58 @@ describe("PreToolUse: git commit", () => {
     });
     expect(result.json.hookSpecificOutput).toBeUndefined();
   });
+
+  it("blocks -F - fed by a heredoc on stdin", () => {
+    const command = ["git commit -F - <<'EOF'", "Fix bug", "", "Co-Authored-By: Claude <noreply@anthropic.com>", "EOF"].join("\n");
+    const result = runHook("PreToolUse", {
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      cwd: repo,
+      tool_input: { command },
+    });
+    expect(result.json.hookSpecificOutput?.permissionDecision).toBe("deny");
+  });
+
+  it("blocks --message=... equals-sign form", () => {
+    const result = runHook("PreToolUse", {
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      cwd: repo,
+      tool_input: { command: 'git commit --message="Co-Authored-By: Claude <noreply@anthropic.com>"' },
+    });
+    expect(result.json.hookSpecificOutput?.permissionDecision).toBe("deny");
+  });
+
+  it("blocks a bundled -am short flag", () => {
+    const result = runHook("PreToolUse", {
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      cwd: repo,
+      tool_input: { command: "git commit -am '🤖 Generated with Claude Code'" },
+    });
+    expect(result.json.hookSpecificOutput?.permissionDecision).toBe("deny");
+  });
+
+  it("blocks git -C <dir> commit", () => {
+    const result = runHook("PreToolUse", {
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      cwd: repo,
+      tool_input: { command: `git -C ${repo} commit -m 'Co-Authored-By: Claude <noreply@anthropic.com>'` },
+    });
+    expect(result.json.hookSpecificOutput?.permissionDecision).toBe("deny");
+  });
+
+  it("does not false-positive on --amend alone", () => {
+    const result = runHook("PreToolUse", {
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      cwd: repo,
+      tool_input: { command: "git commit --amend --no-edit" },
+    });
+    expect(result.code).toBe(0);
+    expect(result.json.hookSpecificOutput).toBeUndefined();
+  });
 });
 
 describe("PreToolUse: gh pr create/edit", () => {
@@ -175,6 +223,101 @@ describe("PostToolUse", () => {
       tool_name: "Write",
       cwd: repo,
       tool_input: { file_path: filePath },
+    });
+    expect(result.json.decision).toBeUndefined();
+  });
+});
+
+describe("PostToolUse: Bash file-writing commands", () => {
+  it("catches a comment introduced by sed -i", () => {
+    const filePath = path.join(repo, "player.js");
+    writeFileSync(filePath, "function start() {\n  player.start();\n}\n");
+    execFileSync("git", ["add", "player.js"], { cwd: repo });
+    execFileSync("git", ["commit", "-q", "-m", "add player"], { cwd: repo });
+    writeFileSync(filePath, "function start() {\n  // Start player\n  player.start();\n}\n");
+
+    const result = runHook("PostToolUse", {
+      hook_event_name: "PostToolUse",
+      tool_name: "Bash",
+      cwd: repo,
+      tool_input: { command: `sed -i '1a\\  // Start player' ${filePath}` },
+      tool_response: { type: "success" },
+    });
+    expect(result.json.decision).toBe("block");
+    expect(result.json.reason).toContain("zero-comments");
+  });
+
+  it("catches an untracked file written via a heredoc redirect", () => {
+    const filePath = path.join(repo, "new.js");
+    writeFileSync(filePath, "// generated\nfunction f() {}\n");
+
+    const result = runHook("PostToolUse", {
+      hook_event_name: "PostToolUse",
+      tool_name: "Bash",
+      cwd: repo,
+      tool_input: { command: `cat > ${filePath} <<'EOF'\n// generated\nfunction f() {}\nEOF` },
+      tool_response: { type: "success" },
+    });
+    expect(result.json.decision).toBe("block");
+  });
+
+  it("does not scan on a read-only Bash call", () => {
+    const filePath = path.join(repo, "player.js");
+    writeFileSync(filePath, "// pre-existing dirty comment\nfunction start() {}\n");
+
+    const result = runHook("PostToolUse", {
+      hook_event_name: "PostToolUse",
+      tool_name: "Bash",
+      cwd: repo,
+      tool_input: { command: "git status" },
+      tool_response: { type: "success" },
+    });
+    expect(result.json.decision).toBeUndefined();
+  });
+
+  it("skips the scan when the Bash command failed", () => {
+    const filePath = path.join(repo, "new.js");
+    writeFileSync(filePath, "// generated\nfunction f() {}\n");
+
+    const result = runHook("PostToolUse", {
+      hook_event_name: "PostToolUse",
+      tool_name: "Bash",
+      cwd: repo,
+      tool_input: { command: `cat > ${filePath} <<'EOF'\n// generated\nfunction f() {}\nEOF` },
+      tool_response: { type: "error" },
+    });
+    expect(result.json.decision).toBeUndefined();
+  });
+});
+
+describe("PostToolUse: git commit ground truth", () => {
+  it("blocks when the actual last commit message has a violation the PreToolUse parser missed", () => {
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "Co-Authored-By: Claude <noreply@anthropic.com>"], {
+      cwd: repo,
+    });
+
+    const result = runHook("PostToolUse", {
+      hook_event_name: "PostToolUse",
+      tool_name: "Bash",
+      cwd: repo,
+      tool_input: { command: "git commit -F - <<'EOF'\nignored\nEOF" },
+      tool_response: { type: "success" },
+    });
+    expect(result.json.decision).toBe("block");
+    expect(result.json.reason).toContain("git commit --amend");
+  });
+
+  it("does not check the ground truth when the commit command failed", () => {
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "Co-Authored-By: Claude <noreply@anthropic.com>"], {
+      cwd: repo,
+    });
+
+    const result = runHook("PostToolUse", {
+      hook_event_name: "PostToolUse",
+      tool_name: "Bash",
+      cwd: repo,
+      tool_input: { command: "git commit -m 'this attempt failed'" },
+      tool_response: { type: "error" },
     });
     expect(result.json.decision).toBeUndefined();
   });
