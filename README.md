@@ -130,19 +130,3 @@ pure-JS runtime dependencies that stay external to the esbuild bundle,
 vendored in so the plugin works from a plain `git clone` with no separate
 `npm install` step) and `grammars/*.wasm`. All three are committed, since the
 plugin is installed straight from this repository.
-
-## Known limitations / follow-ups
-
-- Each hook invocation is a fresh Node process; cold start plus Tree-sitter
-  WASM instantiation measures ~200-250ms for a one-file edit in this
-  environment, above the <100ms ideal in the original spec (still under the
-  <300ms target for a normal diff). Amortizing this would need a persistent
-  daemon process, which is a reasonable follow-up rather than something this
-  first version does.
-- `silent-code doctor`'s "Claude plugin" check is a best-effort read of
-  `~/.claude/plugins/installed_plugins.json`; it has not been validated
-  against every possible installation layout.
-- Python docstrings are strings, not comment nodes, in the Python Tree-sitter
-  grammar, so they are never flagged regardless of the
-  `zero-comments.python-docstrings` config key today; that key is reserved
-  for a future dedicated docstring pass.
