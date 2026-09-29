@@ -44,7 +44,6 @@ export async function detectHookManager(root: string): Promise<HookManagerDetect
         return { manager: "simple-git-hooks", detail: "simple-git-hooks field in package.json" };
       }
     } catch {
-      // ignore malformed package.json
     }
   }
   const hooksPath = await git(["config", "core.hooksPath"], root);

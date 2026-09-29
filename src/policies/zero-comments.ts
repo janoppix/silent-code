@@ -57,7 +57,7 @@ export async function checkZeroComments(
       if (!isNew) continue;
       const rawLine = currentLines[lineNo - 1] ?? "";
       const trimmed = rawLine.trim();
-      if (baseLines.has(trimmed)) continue; // moved/reindented pre-existing comment
+      if (baseLines.has(trimmed)) continue;
       if (isAllowed(rawLine, lineNo === 1, config)) continue;
       violatingLine = lineNo;
       break;

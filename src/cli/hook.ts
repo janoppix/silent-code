@@ -18,7 +18,6 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-/** PostToolUse: check the file just written/edited for zero-comments and zero-ai-attribution. */
 async function handlePostToolUse(input: ClaudeHookInput): Promise<CheckReport> {
   const cwd = input.cwd ?? process.cwd();
   const toolName = input.tool_name ?? "";
@@ -48,16 +47,12 @@ async function handlePostToolUse(input: ClaudeHookInput): Promise<CheckReport> {
 const COMMIT_COMMAND_RE = /\bgit\s+commit\b/;
 const PR_COMMAND_RE = /\bgh\s+pr\s+(create|edit)\b/;
 
-// `-m "$(cat <<'EOF' ... EOF)"` / `--body "$(cat <<EOF ... EOF)"`: the pattern Claude Code
-// itself generates for multi-line commit messages and PR bodies.
 const FLAG_HEREDOC_RE =
   /(-m|-F|--title|--body|--body-file)\s+"?\$\(\s*cat\s+<<[-~]?\s*['"]?(\w+)['"]?[^\n]*\n([\s\S]*?)\n\s*\2\s*\)"?/g;
 
-// `-m "..."` / `--body '...'` as a plain quoted argument.
 const FLAG_QUOTED_RE = /(-m|--title|--body)\s+(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/g;
 
-// `-F <path>` / `--body-file <path>`: an actual file on disk, not an inline argument.
-const FLAG_FILE_RE = /(-F|--body-file)\s+(?:"([^"]+)"|'([^']+)'|(\S+))/g;
+const FLAG_FILE_PATH_RE = /(-F|--body-file)\s+(?:"([^"]+)"|'([^']+)'|(\S+))/g;
 
 function unescapeShellQuoted(text: string): string {
   return text.replace(/\\(["'\\])/g, "$1");
@@ -86,22 +81,21 @@ async function extractTextsFromCommand(command: string, cwd: string): Promise<st
 
   const { readFile } = await import("node:fs/promises");
   const path = await import("node:path");
-  const fileRe = new RegExp(FLAG_FILE_RE.source, "g");
-  while ((match = fileRe.exec(command))) {
+  const filePathRe = new RegExp(FLAG_FILE_PATH_RE.source, "g");
+  while ((match = filePathRe.exec(command))) {
     const filePath = match[2] ?? match[3] ?? match[4] ?? "";
     if (!filePath) continue;
     const absolute = path.isAbsolute(filePath) ? filePath : path.join(cwd, filePath);
     try {
       texts.push(await readFile(absolute, "utf8"));
     } catch {
-      // file not created yet or unreadable; nothing to check
+      continue;
     }
   }
 
   return texts;
 }
 
-/** PreToolUse: inspect `git commit` and `gh pr create|edit` invocations before they run. */
 async function handlePreToolUse(input: ClaudeHookInput): Promise<CheckReport> {
   const cwd = input.cwd ?? process.cwd();
   if (input.tool_name !== "Bash") return emptyReport();
@@ -123,12 +117,6 @@ function normalizeEventName(raw: string): "PreToolUse" | "PostToolUse" {
   return raw.toLowerCase().includes("pre") ? "PreToolUse" : "PostToolUse";
 }
 
-/**
- * Output schema per event, confirmed against Claude Code 2.1.281's own hook plugins and
- * https://code.claude.com/docs/en/hooks.md:
- * - PreToolUse blocks via `hookSpecificOutput.permissionDecision: "deny"` (exit 0).
- * - PostToolUse blocks via a top-level `decision: "block"` (exit 0); it cannot block via exit code.
- */
 export async function runHook(cwd: string, args: string[]): Promise<void> {
   const raw = await readStdin();
   let input: ClaudeHookInput = {};

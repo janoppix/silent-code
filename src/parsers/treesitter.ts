@@ -18,11 +18,10 @@ function moduleDir(): string {
   return path.dirname(fileURLToPath(import.meta.url));
 }
 
-/** Resolves the directory that holds `tree-sitter-<lang>.wasm` files, dev or packaged. */
 export function resolveGrammarsDir(): string {
   const here = moduleDir();
   const candidates = [
-    path.join(here, "..", "..", "grammars"), // dist/parsers -> repo root grammars/, or src/parsers -> repo root
+    path.join(here, "..", "..", "grammars"),
     path.join(here, "..", "grammars"),
     path.join(here, "..", "..", "node_modules", "tree-sitter-wasms", "out"),
     path.join(here, "..", "..", "..", "node_modules", "tree-sitter-wasms", "out"),
@@ -76,7 +75,7 @@ export async function extractComments(spec: LanguageSpec, source: string): Promi
   const ranges: CommentRange[] = [];
 
   const cursor = tree.walk();
-  const visit = (): void => {
+  const collectCommentNodes = (): void => {
     if (nodeTypes.has(cursor.nodeType)) {
       const node = cursor.currentNode;
       ranges.push({
@@ -84,15 +83,15 @@ export async function extractComments(spec: LanguageSpec, source: string): Promi
         endLine: node.endPosition.row + 1,
         text: node.text,
       });
-      return; // comments have no children worth descending into
+      return;
     }
     if (cursor.gotoFirstChild()) {
       do {
-        visit();
+        collectCommentNodes();
       } while (cursor.gotoNextSibling());
       cursor.gotoParent();
     }
   };
-  visit();
+  collectCommentNodes();
   return ranges;
 }

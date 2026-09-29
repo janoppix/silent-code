@@ -37,7 +37,6 @@ export async function repoRoot(cwd: string): Promise<string | null> {
   return res.stdout.trim();
 }
 
-/** Content of a file at a given ref (`HEAD`, `:0` for index, a commit sha). Empty string if it does not exist there. */
 export async function showFileAtRef(cwd: string, ref: string, file: string): Promise<string> {
   const spec = ref === ":0" ? `:${file}` : `${ref}:${file}`;
   const res = await git(["show", spec], cwd);
@@ -56,17 +55,10 @@ export async function isFileStaged(cwd: string, file: string): Promise<boolean> 
 }
 
 export interface DiffContext {
-  /** File contents before the change (empty string if new file). */
   base: string;
-  /** File contents after the change. */
   current: string;
 }
 
-/**
- * Resolves base/current content for a file depending on where Claude / git currently stands:
- * - staged changes take precedence over HEAD as the base
- * - falls back to the working tree copy for `current` when not given explicitly
- */
 export async function resolveDiffContext(
   cwd: string,
   file: string,

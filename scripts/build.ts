@@ -37,6 +37,8 @@ async function copyGrammars(): Promise<void> {
   );
 }
 
+const DEPS_EXTERNAL_TO_BUNDLE_AND_VENDORED_INTO_DIST = ["yaml", "picomatch", "diff", "web-tree-sitter"];
+
 async function bundle(): Promise<void> {
   await build({
     entryPoints: [path.join(root, "src", "cli", "index.ts")],
@@ -45,27 +47,15 @@ async function bundle(): Promise<void> {
     platform: "node",
     format: "esm",
     target: "node18",
-    // These ship as real dependencies (see package.json) so the plugin works whether it is
-    // installed via `npm install` or checked out directly from git with node_modules committed;
-    // bundling their CJS internals into an ESM output breaks Node's dynamic-require shim for
-    // built-ins (e.g. yaml requiring "process").
-    external: ["yaml", "picomatch", "diff", "web-tree-sitter"],
+    external: DEPS_EXTERNAL_TO_BUNDLE_AND_VENDORED_INTO_DIST,
   });
 }
 
-const VENDORED_RUNTIME_DEPS = ["yaml", "picomatch", "diff", "web-tree-sitter"];
-
-/**
- * Vendors the handful of production dependencies that stay external to the esbuild bundle
- * (see the comment above `external` in `bundle()`) into dist/node_modules, so `dist/` is
- * self-contained for a plugin installed via a plain `git clone`, with no separate
- * `npm install` step required.
- */
 async function vendorRuntimeDeps(): Promise<void> {
   const destRoot = path.join(root, "dist", "node_modules");
   await rm(destRoot, { recursive: true, force: true });
   await mkdir(destRoot, { recursive: true });
-  for (const dep of VENDORED_RUNTIME_DEPS) {
+  for (const dep of DEPS_EXTERNAL_TO_BUNDLE_AND_VENDORED_INTO_DIST) {
     await cp(path.join(root, "node_modules", dep), path.join(destRoot, dep), { recursive: true });
   }
 }

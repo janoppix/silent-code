@@ -96,12 +96,16 @@ describe("zero-comments: Python", () => {
     expect(report.ok).toBe(true);
   });
 
-  it("respects noqa allowlist only when enabled", async () => {
+  it("blocks noqa when the allowlist entry is disabled", async () => {
     const base = "";
     const current = "import os  # noqa\n";
     const report = await checkZeroComments("app.py", base, current, config);
-    expect(report.ok).toBe(false); // noqa disabled by default
+    expect(report.ok).toBe(false);
+  });
 
+  it("allows noqa when the allowlist entry is enabled", async () => {
+    const base = "";
+    const current = "import os  # noqa\n";
     const withNoqa = { ...config, allow: { ...config.allow, noqa: true } };
     const report2 = await checkZeroComments("app.py", base, current, withNoqa);
     expect(report2.ok).toBe(true);

@@ -1,15 +1,11 @@
 import type { CommentRange } from "./treesitter.js";
 
-/**
- * Minimal CoffeeScript tokenizer, scoped to what zero-comments needs: tell comments apart
- * from strings, block strings, interpolation and regex literals. Not a full CoffeeScript parser.
- */
 export function extractCoffeeScriptComments(source: string): CommentRange[] {
   const ranges: CommentRange[] = [];
   let i = 0;
   let line = 1;
   const n = source.length;
-  let lastSignificant: string | null = null; // last non-space char consumed, for regex/division disambiguation
+  let lastNonSpaceChar: string | null = null;
 
   const advanceThrough = (text: string, from: number): number => {
     let l = line;
@@ -29,7 +25,6 @@ export function extractCoffeeScriptComments(source: string): CommentRange[] {
       continue;
     }
 
-    // Block comment ###...###
     if (source.startsWith("###", i)) {
       const start = i;
       const startLine = line;
@@ -39,11 +34,10 @@ export function extractCoffeeScriptComments(source: string): CommentRange[] {
       advanceThrough(text, 0);
       ranges.push({ startLine, endLine: line, text });
       i = stop;
-      lastSignificant = null;
+      lastNonSpaceChar = null;
       continue;
     }
 
-    // Line comment #...
     if (ch === "#") {
       const start = i;
       const startLine = line;
@@ -51,11 +45,10 @@ export function extractCoffeeScriptComments(source: string): CommentRange[] {
       if (end === -1) end = n;
       ranges.push({ startLine, endLine: startLine, text: source.slice(start, end) });
       i = end;
-      lastSignificant = null;
+      lastNonSpaceChar = null;
       continue;
     }
 
-    // Triple-quoted block strings '''...''' and """...""" (interpolation inside """ handled generically below)
     if (source.startsWith("'''", i) || source.startsWith('"""', i)) {
       const quote = source.slice(i, i + 3);
       const start = i + 3;
@@ -63,13 +56,11 @@ export function extractCoffeeScriptComments(source: string): CommentRange[] {
       const stop = end === -1 ? n : end + 3;
       advanceThrough(source.slice(i, stop), 0);
       i = stop;
-      lastSignificant = "'";
+      lastNonSpaceChar = "'";
       continue;
     }
 
-    // Single-quoted string (no interpolation, but escapes allowed)
     if (ch === "'") {
-      const start = i;
       i++;
       while (i < n && source[i] !== "'") {
         if (source[i] === "\\") i++;
@@ -77,12 +68,10 @@ export function extractCoffeeScriptComments(source: string): CommentRange[] {
         i++;
       }
       i++;
-      lastSignificant = "'";
-      void start;
+      lastNonSpaceChar = "'";
       continue;
     }
 
-    // Double-quoted string with #{...} interpolation
     if (ch === '"') {
       i++;
       while (i < n && source[i] !== '"') {
@@ -92,10 +81,10 @@ export function extractCoffeeScriptComments(source: string): CommentRange[] {
         }
         if (source[i] === "#" && source[i + 1] === "{") {
           i += 2;
-          let depth = 1;
-          while (i < n && depth > 0) {
-            if (source[i] === "{") depth++;
-            if (source[i] === "}") depth--;
+          let interpolationDepth = 1;
+          while (i < n && interpolationDepth > 0) {
+            if (source[i] === "{") interpolationDepth++;
+            if (source[i] === "}") interpolationDepth--;
             if (source[i] === "\n") line++;
             i++;
           }
@@ -105,50 +94,51 @@ export function extractCoffeeScriptComments(source: string): CommentRange[] {
         i++;
       }
       i++;
-      lastSignificant = '"';
+      lastNonSpaceChar = '"';
       continue;
     }
 
-    // Extended regex ///.../// (can contain comments in real CoffeeScript; treated as opaque here)
     if (source.startsWith("///", i)) {
       const start = i;
       const end = source.indexOf("///", i + 3);
       const stop = end === -1 ? n : end + 3;
       advanceThrough(source.slice(start, stop), 0);
       i = stop;
-      lastSignificant = "/";
+      lastNonSpaceChar = "/";
       continue;
     }
 
-    // Regex literal /.../, disambiguated from division by previous significant token
-    if (ch === "/" && canStartRegex(lastSignificant)) {
+    if (ch === "/" && canStartRegex(lastNonSpaceChar)) {
       const start = i;
       i++;
-      let inClass = false;
-      while (i < n && (inClass || source[i] !== "/")) {
+      let inCharacterClass = false;
+      let closed = false;
+      while (i < n) {
         if (source[i] === "\\") {
           i += 2;
           continue;
         }
-        if (source[i] === "[") inClass = true;
-        if (source[i] === "]") inClass = false;
-        if (source[i] === "\n") break; // unterminated, bail
+        if (source[i] === "[") inCharacterClass = true;
+        if (source[i] === "]") inCharacterClass = false;
+        if (source[i] === "\n") break;
+        if (!inCharacterClass && source[i] === "/") {
+          closed = true;
+          i++;
+          break;
+        }
         i++;
       }
-      if (i < n && source[i] === "/") {
-        i++;
-        lastSignificant = "/";
-        void start;
+      if (closed) {
+        lastNonSpaceChar = "/";
         continue;
       }
-      // not actually a regex (unterminated) - treat as division, fall through
       i = start + 1;
-      lastSignificant = "/";
+      lastNonSpaceChar = "/";
       continue;
     }
 
     if (!/\s/.test(ch)) {
-      lastSignificant = ch;
+      lastNonSpaceChar = ch;
     }
     i++;
   }
@@ -156,8 +146,8 @@ export function extractCoffeeScriptComments(source: string): CommentRange[] {
   return ranges;
 }
 
-function canStartRegex(lastSignificant: string | null): boolean {
-  if (lastSignificant === null) return true;
-  if (/[a-zA-Z0-9_)\]}]/.test(lastSignificant)) return false;
+function canStartRegex(lastNonSpaceChar: string | null): boolean {
+  if (lastNonSpaceChar === null) return true;
+  if (/[a-zA-Z0-9_)\]}]/.test(lastNonSpaceChar)) return false;
   return true;
 }

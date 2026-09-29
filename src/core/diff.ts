@@ -1,6 +1,5 @@
 import { diffLines } from "diff";
 
-/** 1-indexed line numbers that are new in `current` relative to `base`. */
 export function addedLineNumbers(base: string, current: string): Set<number> {
   const added = new Set<number>();
   if (base === current) return added;
@@ -21,7 +20,6 @@ export function addedLineNumbers(base: string, current: string): Set<number> {
   return added;
 }
 
-/** Set of normalized (trimmed) lines that existed anywhere in `base`, for move/reindent tolerance. */
 export function baseLineSet(base: string): Set<string> {
   return new Set(base.split("\n").map((l) => l.trim()));
 }

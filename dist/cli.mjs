@@ -461,7 +461,7 @@ function extractCoffeeScriptComments(source) {
   let i = 0;
   let line = 1;
   const n = source.length;
-  let lastSignificant = null;
+  let lastNonSpaceChar = null;
   const advanceThrough = (text, from) => {
     let l = line;
     for (let k = from; k < text.length; k++) {
@@ -486,7 +486,7 @@ function extractCoffeeScriptComments(source) {
       advanceThrough(text, 0);
       ranges.push({ startLine, endLine: line, text });
       i = stop;
-      lastSignificant = null;
+      lastNonSpaceChar = null;
       continue;
     }
     if (ch === "#") {
@@ -496,7 +496,7 @@ function extractCoffeeScriptComments(source) {
       if (end === -1) end = n;
       ranges.push({ startLine, endLine: startLine, text: source.slice(start, end) });
       i = end;
-      lastSignificant = null;
+      lastNonSpaceChar = null;
       continue;
     }
     if (source.startsWith("'''", i) || source.startsWith('"""', i)) {
@@ -506,11 +506,10 @@ function extractCoffeeScriptComments(source) {
       const stop = end === -1 ? n : end + 3;
       advanceThrough(source.slice(i, stop), 0);
       i = stop;
-      lastSignificant = "'";
+      lastNonSpaceChar = "'";
       continue;
     }
     if (ch === "'") {
-      const start = i;
       i++;
       while (i < n && source[i] !== "'") {
         if (source[i] === "\\") i++;
@@ -518,8 +517,7 @@ function extractCoffeeScriptComments(source) {
         i++;
       }
       i++;
-      lastSignificant = "'";
-      void start;
+      lastNonSpaceChar = "'";
       continue;
     }
     if (ch === '"') {
@@ -531,10 +529,10 @@ function extractCoffeeScriptComments(source) {
         }
         if (source[i] === "#" && source[i + 1] === "{") {
           i += 2;
-          let depth = 1;
-          while (i < n && depth > 0) {
-            if (source[i] === "{") depth++;
-            if (source[i] === "}") depth--;
+          let interpolationDepth = 1;
+          while (i < n && interpolationDepth > 0) {
+            if (source[i] === "{") interpolationDepth++;
+            if (source[i] === "}") interpolationDepth--;
             if (source[i] === "\n") line++;
             i++;
           }
@@ -544,7 +542,7 @@ function extractCoffeeScriptComments(source) {
         i++;
       }
       i++;
-      lastSignificant = '"';
+      lastNonSpaceChar = '"';
       continue;
     }
     if (source.startsWith("///", i)) {
@@ -553,43 +551,47 @@ function extractCoffeeScriptComments(source) {
       const stop = end === -1 ? n : end + 3;
       advanceThrough(source.slice(start, stop), 0);
       i = stop;
-      lastSignificant = "/";
+      lastNonSpaceChar = "/";
       continue;
     }
-    if (ch === "/" && canStartRegex(lastSignificant)) {
+    if (ch === "/" && canStartRegex(lastNonSpaceChar)) {
       const start = i;
       i++;
-      let inClass = false;
-      while (i < n && (inClass || source[i] !== "/")) {
+      let inCharacterClass = false;
+      let closed = false;
+      while (i < n) {
         if (source[i] === "\\") {
           i += 2;
           continue;
         }
-        if (source[i] === "[") inClass = true;
-        if (source[i] === "]") inClass = false;
+        if (source[i] === "[") inCharacterClass = true;
+        if (source[i] === "]") inCharacterClass = false;
         if (source[i] === "\n") break;
+        if (!inCharacterClass && source[i] === "/") {
+          closed = true;
+          i++;
+          break;
+        }
         i++;
       }
-      if (i < n && source[i] === "/") {
-        i++;
-        lastSignificant = "/";
-        void start;
+      if (closed) {
+        lastNonSpaceChar = "/";
         continue;
       }
       i = start + 1;
-      lastSignificant = "/";
+      lastNonSpaceChar = "/";
       continue;
     }
     if (!/\s/.test(ch)) {
-      lastSignificant = ch;
+      lastNonSpaceChar = ch;
     }
     i++;
   }
   return ranges;
 }
-function canStartRegex(lastSignificant) {
-  if (lastSignificant === null) return true;
-  if (/[a-zA-Z0-9_)\]}]/.test(lastSignificant)) return false;
+function canStartRegex(lastNonSpaceChar) {
+  if (lastNonSpaceChar === null) return true;
+  if (/[a-zA-Z0-9_)\]}]/.test(lastNonSpaceChar)) return false;
   return true;
 }
 
@@ -608,7 +610,6 @@ function resolveGrammarsDir() {
   const here = moduleDir();
   const candidates = [
     path2.join(here, "..", "..", "grammars"),
-    // dist/parsers -> repo root grammars/, or src/parsers -> repo root
     path2.join(here, "..", "grammars"),
     path2.join(here, "..", "..", "node_modules", "tree-sitter-wasms", "out"),
     path2.join(here, "..", "..", "..", "node_modules", "tree-sitter-wasms", "out")
@@ -657,7 +658,7 @@ async function extractComments(spec, source) {
   const nodeTypes = new Set(spec.commentNodeTypes ?? ["comment"]);
   const ranges = [];
   const cursor = tree.walk();
-  const visit = () => {
+  const collectCommentNodes = () => {
     if (nodeTypes.has(cursor.nodeType)) {
       const node = cursor.currentNode;
       ranges.push({
@@ -669,12 +670,12 @@ async function extractComments(spec, source) {
     }
     if (cursor.gotoFirstChild()) {
       do {
-        visit();
+        collectCommentNodes();
       } while (cursor.gotoNextSibling());
       cursor.gotoParent();
     }
   };
-  visit();
+  collectCommentNodes();
   return ranges;
 }
 
@@ -896,7 +897,7 @@ var COMMIT_COMMAND_RE = /\bgit\s+commit\b/;
 var PR_COMMAND_RE = /\bgh\s+pr\s+(create|edit)\b/;
 var FLAG_HEREDOC_RE = /(-m|-F|--title|--body|--body-file)\s+"?\$\(\s*cat\s+<<[-~]?\s*['"]?(\w+)['"]?[^\n]*\n([\s\S]*?)\n\s*\2\s*\)"?/g;
 var FLAG_QUOTED_RE = /(-m|--title|--body)\s+(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/g;
-var FLAG_FILE_RE = /(-F|--body-file)\s+(?:"([^"]+)"|'([^']+)'|(\S+))/g;
+var FLAG_FILE_PATH_RE = /(-F|--body-file)\s+(?:"([^"]+)"|'([^']+)'|(\S+))/g;
 function unescapeShellQuoted(text) {
   return text.replace(/\\(["'\\])/g, "$1");
 }
@@ -920,14 +921,15 @@ async function extractTextsFromCommand(command, cwd) {
   }
   const { readFile: readFile6 } = await import("node:fs/promises");
   const path7 = await import("node:path");
-  const fileRe = new RegExp(FLAG_FILE_RE.source, "g");
-  while (match = fileRe.exec(command)) {
+  const filePathRe = new RegExp(FLAG_FILE_PATH_RE.source, "g");
+  while (match = filePathRe.exec(command)) {
     const filePath = match[2] ?? match[3] ?? match[4] ?? "";
     if (!filePath) continue;
     const absolute = path7.isAbsolute(filePath) ? filePath : path7.join(cwd, filePath);
     try {
       texts.push(await readFile6(absolute, "utf8"));
     } catch {
+      continue;
     }
   }
   return texts;

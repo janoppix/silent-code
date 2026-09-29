@@ -21,9 +21,7 @@ export type ParserKind = "tree-sitter" | "coffeescript-lexer";
 export interface LanguageSpec {
   id: LanguageId;
   kind: ParserKind;
-  /** Grammar file name inside tree-sitter-wasms/out, without the `tree-sitter-` prefix removed. */
   wasmFile?: string;
-  /** Tree-sitter node types that represent comments in this grammar. */
   commentNodeTypes?: string[];
 }
 
