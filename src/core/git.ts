@@ -123,10 +123,8 @@ export async function lastCommitMessage(cwd: string): Promise<string | null> {
   return res.stdout;
 }
 
-export async function commitMessagesInRange(cwd: string, range: string): Promise<{ sha: string; message: string }[]> {
-  const res = await git(["log", "--format=%H%x01%B%x02", range], cwd);
-  if (res.code !== 0) return [];
-  return res.stdout
+function parseCommitLog(stdout: string): { sha: string; message: string }[] {
+  return stdout
     .split("\x02")
     .map((chunk) => chunk.trim())
     .filter(Boolean)
@@ -134,4 +132,31 @@ export async function commitMessagesInRange(cwd: string, range: string): Promise
       const [sha, ...rest] = chunk.split("\x01");
       return { sha, message: rest.join("\x01").trim() };
     });
+}
+
+export async function commitMessagesInRange(cwd: string, range: string): Promise<{ sha: string; message: string }[]> {
+  const res = await git(["log", "--format=%H%x01%B%x02", range], cwd);
+  if (res.code !== 0) return [];
+  return parseCommitLog(res.stdout);
+}
+
+export async function commitsNotYetOnRemote(
+  cwd: string,
+  explicitRemoteBranch?: string,
+): Promise<{ sha: string; message: string }[]> {
+  const pushTarget = await git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{push}"], cwd);
+  if (pushTarget.code === 0 && pushTarget.stdout.trim()) {
+    return commitMessagesInRange(cwd, `${pushTarget.stdout.trim()}..HEAD`);
+  }
+
+  if (explicitRemoteBranch) {
+    const verify = await git(["rev-parse", "--verify", explicitRemoteBranch], cwd);
+    if (verify.code === 0) {
+      return commitMessagesInRange(cwd, `${explicitRemoteBranch}..HEAD`);
+    }
+  }
+
+  const res = await git(["log", "--format=%H%x01%B%x02", "HEAD", "--not", "--remotes"], cwd);
+  if (res.code !== 0) return [];
+  return parseCommitLog(res.stdout);
 }

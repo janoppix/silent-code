@@ -48,9 +48,16 @@ regardless of how the message was passed. A `PreToolUse` hook on `Bash`
 additionally inspects `git commit` and `gh pr create|edit` invocations
 (`-m`, `--message`, bundled `-am`, `-F`/`--file`/`--body-file` including
 stdin heredocs, and the `$(cat <<EOF ...)` idiom) before they run, catching
-most violations before the commit is even created. A violation is returned to
-Claude as structured feedback so it can self-correct instead of silently
-failing; for the post-commit ground truth, the feedback is to amend.
+most violations before the commit is even created. It also scans the raw
+command text itself (not just the extracted message), so content assembled
+with `printf`/`echo` into a file before `-F <file>` reads it back still gets
+caught; and it inspects `git push`, denying it if any commit not yet on the
+remote (resolved via `@{push}`, the explicit remote/branch in the command, or
+`--not --remotes` as a fallback for a brand-new branch) violates
+`zero-coauthor`/`zero-ai-attribution` — the last line of defense before
+something leaves the machine. A violation is returned to Claude as structured
+feedback so it can self-correct instead of silently failing; for the
+post-commit ground truth, the feedback is to amend.
 
 `gh pr` bodies are only checked at the `PreToolUse` parsing layer, not with a
 ground-truth `gh pr view` call after the fact — the spec requires this tool

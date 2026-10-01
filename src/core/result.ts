@@ -21,6 +21,17 @@ export function mergeReports(reports: CheckReport[]): CheckReport {
   return { ok: violations.length === 0, violations, warnings };
 }
 
+export function dedupeViolations(report: CheckReport): CheckReport {
+  const seen = new Set<string>();
+  const violations = report.violations.filter((v) => {
+    const key = `${v.policy}:${v.file ?? ""}:${v.line ?? ""}:${v.snippet}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return { ...report, violations };
+}
+
 export function emptyReport(): CheckReport {
   return { ok: true, violations: [], warnings: [] };
 }

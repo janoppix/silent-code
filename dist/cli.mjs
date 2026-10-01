@@ -173,13 +173,31 @@ async function lastCommitMessage(cwd) {
   if (res.code !== 0) return null;
   return res.stdout;
 }
-async function commitMessagesInRange(cwd, range) {
-  const res = await git(["log", "--format=%H%x01%B%x02", range], cwd);
-  if (res.code !== 0) return [];
-  return res.stdout.split("").map((chunk) => chunk.trim()).filter(Boolean).map((chunk) => {
+function parseCommitLog(stdout) {
+  return stdout.split("").map((chunk) => chunk.trim()).filter(Boolean).map((chunk) => {
     const [sha, ...rest] = chunk.split("");
     return { sha, message: rest.join("").trim() };
   });
+}
+async function commitMessagesInRange(cwd, range) {
+  const res = await git(["log", "--format=%H%x01%B%x02", range], cwd);
+  if (res.code !== 0) return [];
+  return parseCommitLog(res.stdout);
+}
+async function commitsNotYetOnRemote(cwd, explicitRemoteBranch) {
+  const pushTarget = await git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{push}"], cwd);
+  if (pushTarget.code === 0 && pushTarget.stdout.trim()) {
+    return commitMessagesInRange(cwd, `${pushTarget.stdout.trim()}..HEAD`);
+  }
+  if (explicitRemoteBranch) {
+    const verify = await git(["rev-parse", "--verify", explicitRemoteBranch], cwd);
+    if (verify.code === 0) {
+      return commitMessagesInRange(cwd, `${explicitRemoteBranch}..HEAD`);
+    }
+  }
+  const res = await git(["log", "--format=%H%x01%B%x02", "HEAD", "--not", "--remotes"], cwd);
+  if (res.code !== 0) return [];
+  return parseCommitLog(res.stdout);
 }
 
 // src/core/result.ts
@@ -187,6 +205,16 @@ function mergeReports(reports) {
   const violations = reports.flatMap((r) => r.violations);
   const warnings = reports.flatMap((r) => r.warnings);
   return { ok: violations.length === 0, violations, warnings };
+}
+function dedupeViolations(report) {
+  const seen = /* @__PURE__ */ new Set();
+  const violations = report.violations.filter((v) => {
+    const key = `${v.policy}:${v.file ?? ""}:${v.line ?? ""}:${v.snippet}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return { ...report, violations };
 }
 function emptyReport() {
   return { ok: true, violations: [], warnings: [] };
@@ -894,6 +922,7 @@ async function checkTreeSitter() {
 // src/cli/hook.ts
 var COMMIT_COMMAND_RE = /\bgit\b[^&|;\n]*\bcommit\b/;
 var PR_COMMAND_RE = /\bgh\b[^&|;\n]*\bpr\b[^&|;\n]*\b(create|edit)\b/;
+var PUSH_COMMAND_RE = /\bgit\b[^&|;\n]*\bpush\b/;
 var GENERIC_HEREDOC_RE = /<<[-~]?\s*(['"]?)(\w+)\1[^\n]*\n([\s\S]*?)\n[ \t]*\2\b/g;
 var FLAG_QUOTED_RE = /(?<=^|\s)(?:-[a-zA-Z]*m|--message|--title|--body)(?:=|\s+)(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/g;
 var FLAG_FILE_PATH_RE = /(?:-F|--file|--body-file)(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))/g;
@@ -1008,18 +1037,52 @@ async function handlePostToolUse(input) {
   }
   return emptyReport();
 }
+function expandLiteralNewlines(text) {
+  return text.replace(/\\n/g, "\n");
+}
+function parsePushTarget(command) {
+  const match = command.match(/\bgit\s+push\b([^|&;\n]*)/);
+  if (!match) return void 0;
+  const tokens = match[1].trim().split(/\s+/).filter((t) => t && !t.startsWith("-"));
+  const [remote, refspec] = tokens;
+  if (!remote || !refspec) return void 0;
+  const branch = refspec.split(":")[0];
+  if (!branch) return void 0;
+  return `${remote}/${branch}`;
+}
+async function checkCommitAndPrText(cwd, command) {
+  const config = await loadConfig(cwd);
+  const texts = await extractTextsFromCommand(command, cwd);
+  const reports = texts.map((text) => checkCommitMessage(text, config));
+  reports.push(checkCommitMessage(expandLiteralNewlines(command), config));
+  return dedupeViolations(mergeReports(reports));
+}
+async function checkPushedCommits(cwd, command) {
+  const root = await repoRoot(cwd) ?? cwd;
+  const config = await loadConfig(root);
+  const commits = await commitsNotYetOnRemote(root, parsePushTarget(command));
+  const reports = commits.map((commit) => {
+    const report = checkCommitMessage(commit.message, config);
+    return {
+      ...report,
+      violations: report.violations.map((v) => ({ ...v, file: v.file ?? `commit ${commit.sha.slice(0, 8)}` }))
+    };
+  });
+  return mergeReports(reports);
+}
 async function handlePreToolUse(input) {
   const cwd = input.cwd ?? process.cwd();
   if (input.tool_name !== "Bash") return emptyReport();
   const command = input.tool_input?.command ?? "";
-  const isCommit = COMMIT_COMMAND_RE.test(command);
-  const isPr = PR_COMMAND_RE.test(command);
-  if (!isCommit && !isPr) return emptyReport();
-  const texts = await extractTextsFromCommand(command, cwd);
-  if (texts.length === 0) return emptyReport();
-  const config = await loadConfig(cwd);
-  const reports = texts.map((text) => checkCommitMessage(text, config));
-  return mergeReports(reports);
+  const reports = [];
+  if (COMMIT_COMMAND_RE.test(command) || PR_COMMAND_RE.test(command)) {
+    reports.push(await checkCommitAndPrText(cwd, command));
+  }
+  if (PUSH_COMMAND_RE.test(command)) {
+    reports.push(await checkPushedCommits(cwd, command));
+  }
+  if (reports.length === 0) return emptyReport();
+  return dedupeViolations(mergeReports(reports));
 }
 function normalizeEventName(raw) {
   return raw.toLowerCase().includes("pre") ? "PreToolUse" : "PostToolUse";

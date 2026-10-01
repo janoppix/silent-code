@@ -322,3 +322,70 @@ describe("PostToolUse: git commit ground truth", () => {
     expect(result.json.decision).toBeUndefined();
   });
 });
+
+describe("PreToolUse: raw command text scan (printf-before-file-read bypass)", () => {
+  it("blocks a trailer assembled with printf before -F reads the file", () => {
+    const command = [
+      "printf 'Fix bug\\n\\nCo-Authored-By: Claude <noreply@anthropic.com>\\n' >> msg.txt",
+      "git commit --amend -F msg.txt",
+    ].join(" && ");
+    const result = runHook("PreToolUse", {
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      cwd: repo,
+      tool_input: { command },
+    });
+    expect(result.json.hookSpecificOutput?.permissionDecision).toBe("deny");
+  });
+
+  it("allows a clean printf-composed message", () => {
+    const command = ["printf 'Fix bug\\n' >> msg.txt", "git commit --amend -F msg.txt"].join(" && ");
+    const result = runHook("PreToolUse", {
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      cwd: repo,
+      tool_input: { command },
+    });
+    expect(result.json.hookSpecificOutput).toBeUndefined();
+  });
+});
+
+describe("PreToolUse: git push", () => {
+  it("blocks pushing an unpushed commit with a Co-Authored-By trailer", () => {
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "Co-Authored-By: Claude <noreply@anthropic.com>"], {
+      cwd: repo,
+    });
+
+    const result = runHook("PreToolUse", {
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      cwd: repo,
+      tool_input: { command: "git push origin main" },
+    });
+    expect(result.json.hookSpecificOutput?.permissionDecision).toBe("deny");
+  });
+
+  it("allows pushing when no unpushed commit has a violation", () => {
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "Fix pagination bug"], { cwd: repo });
+
+    const result = runHook("PreToolUse", {
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      cwd: repo,
+      tool_input: { command: "git push origin main" },
+    });
+    expect(result.json.hookSpecificOutput).toBeUndefined();
+  });
+
+  it("blocks a bare git push with no explicit remote/branch using the --not --remotes fallback", () => {
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "🤖 Generated with Claude Code"], { cwd: repo });
+
+    const result = runHook("PreToolUse", {
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      cwd: repo,
+      tool_input: { command: "git push" },
+    });
+    expect(result.json.hookSpecificOutput?.permissionDecision).toBe("deny");
+  });
+});

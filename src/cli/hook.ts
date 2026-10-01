@@ -1,6 +1,19 @@
 import { loadConfig } from "../core/config.js";
-import { lastCommitMessage, repoRoot, resolveDiffContext, workingTreeChangedFiles } from "../core/git.js";
-import { emptyReport, formatReport, mergeReports, type CheckReport, type Violation } from "../core/result.js";
+import {
+  commitsNotYetOnRemote,
+  lastCommitMessage,
+  repoRoot,
+  resolveDiffContext,
+  workingTreeChangedFiles,
+} from "../core/git.js";
+import {
+  dedupeViolations,
+  emptyReport,
+  formatReport,
+  mergeReports,
+  type CheckReport,
+  type Violation,
+} from "../core/result.js";
 import { checkCommitMessage, checkFile } from "../policies/index.js";
 
 interface ClaudeHookInput {
@@ -13,6 +26,7 @@ interface ClaudeHookInput {
 
 const COMMIT_COMMAND_RE = /\bgit\b[^&|;\n]*\bcommit\b/;
 const PR_COMMAND_RE = /\bgh\b[^&|;\n]*\bpr\b[^&|;\n]*\b(create|edit)\b/;
+const PUSH_COMMAND_RE = /\bgit\b[^&|;\n]*\bpush\b/;
 
 const GENERIC_HEREDOC_RE = /<<[-~]?\s*(['"]?)(\w+)\1[^\n]*\n([\s\S]*?)\n[ \t]*\2\b/g;
 
@@ -153,21 +167,60 @@ async function handlePostToolUse(input: ClaudeHookInput): Promise<CheckReport> {
   return emptyReport();
 }
 
+function expandLiteralNewlines(text: string): string {
+  return text.replace(/\\n/g, "\n");
+}
+
+function parsePushTarget(command: string): string | undefined {
+  const match = command.match(/\bgit\s+push\b([^|&;\n]*)/);
+  if (!match) return undefined;
+  const tokens = match[1]
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t && !t.startsWith("-"));
+  const [remote, refspec] = tokens;
+  if (!remote || !refspec) return undefined;
+  const branch = refspec.split(":")[0];
+  if (!branch) return undefined;
+  return `${remote}/${branch}`;
+}
+
+async function checkCommitAndPrText(cwd: string, command: string): Promise<CheckReport> {
+  const config = await loadConfig(cwd);
+  const texts = await extractTextsFromCommand(command, cwd);
+  const reports = texts.map((text) => checkCommitMessage(text, config));
+  reports.push(checkCommitMessage(expandLiteralNewlines(command), config));
+  return dedupeViolations(mergeReports(reports));
+}
+
+async function checkPushedCommits(cwd: string, command: string): Promise<CheckReport> {
+  const root = (await repoRoot(cwd)) ?? cwd;
+  const config = await loadConfig(root);
+  const commits = await commitsNotYetOnRemote(root, parsePushTarget(command));
+  const reports = commits.map((commit) => {
+    const report = checkCommitMessage(commit.message, config);
+    return {
+      ...report,
+      violations: report.violations.map((v) => ({ ...v, file: v.file ?? `commit ${commit.sha.slice(0, 8)}` })),
+    };
+  });
+  return mergeReports(reports);
+}
+
 async function handlePreToolUse(input: ClaudeHookInput): Promise<CheckReport> {
   const cwd = input.cwd ?? process.cwd();
   if (input.tool_name !== "Bash") return emptyReport();
   const command = (input.tool_input?.command as string | undefined) ?? "";
 
-  const isCommit = COMMIT_COMMAND_RE.test(command);
-  const isPr = PR_COMMAND_RE.test(command);
-  if (!isCommit && !isPr) return emptyReport();
-
-  const texts = await extractTextsFromCommand(command, cwd);
-  if (texts.length === 0) return emptyReport();
-
-  const config = await loadConfig(cwd);
-  const reports = texts.map((text) => checkCommitMessage(text, config));
-  return mergeReports(reports);
+  const reports: CheckReport[] = [];
+  if (COMMIT_COMMAND_RE.test(command) || PR_COMMAND_RE.test(command)) {
+    reports.push(await checkCommitAndPrText(cwd, command));
+  }
+  if (PUSH_COMMAND_RE.test(command)) {
+    reports.push(await checkPushedCommits(cwd, command));
+  }
+  if (reports.length === 0) return emptyReport();
+  return dedupeViolations(mergeReports(reports));
 }
 
 function normalizeEventName(raw: string): "PreToolUse" | "PostToolUse" {
